@@ -26,9 +26,49 @@ public class Filter extends FilterGroup {
 		this.Type = type;
 	}
 	
+	public Filter(int page) {
+		this.Page = page;
+	}
+	
 	public Filter(int page, List<FilterCriterion> criteria) {
 		this(criteria);
 		this.Page = page;
+	}
+	
+	/**
+	 * Sets the page of data to return.
+	 * @return This instance.
+	 */
+	public Filter setPage(Integer page) {
+		this.Page = page;
+		return this;
+	}
+	
+	/**
+	 * Adds a criterion to this group.
+	 * @return This instance.
+	 */
+	public Filter addCriterion(FilterCriterion criterion) {
+		super.addCriterion(criterion);
+		return this;
+	}
+
+	/**
+	 * Adds a criterion to this group.
+	 * @return This instance.
+	 */
+	public Filter addCriterion(String name, FilterOperator operator) {
+		super.addCriterion(name, operator, null);
+		return this;
+	}
+
+	/**
+	 * Adds a criterion to this group.
+	 * @return This instance.
+	 */
+	public Filter addCriterion(String name, FilterOperator operator, Object value) {
+		super.addCriterion(new FilterCriterion(name, operator, value));
+		return this;
 	}
 
 	/**

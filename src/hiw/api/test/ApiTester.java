@@ -1,5 +1,8 @@
 package hiw.api.test;
 
+import java.io.BufferedReader;
+import java.io.FileWriter;
+import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -17,25 +20,43 @@ public class ApiTester {
 	private static final String _baseUrl = "http://services.healthindicators.gov/v5/REST.svc/";
 	
 	//Your API key.
-	private static final String _apiKey = "";
+	private String _apiKey = null;
 	
 	//The ID of the Indicator Description you're interested in (Deaths, all causes (per 100,000);
-	private static final int _indicatorDescriptionId = 71;
+	private Integer _indicatorDescriptionId = null;
+	
+	//The number of pages of data to pull from the API (set to null for all pages).
+	private Integer _pages = null;
 
 	public static void main(String[] args) throws Exception {
-		if ("".equals(_apiKey)) {
-			System.out.println("No API key specified - please set ApiTester._apiKey and try again.");
-			System.in.read();
-			return;
+		String apiKey = null;
+		Integer indicatorDescriptionId = 71;
+		Integer pages = null;
+		
+		if (args != null) {
+			if (args.length >= 1)
+				apiKey = args[0];
+
+			if (args.length >= 2)
+				indicatorDescriptionId = Integer.parseInt(args[1]);
+
+			if (args.length >= 3)
+				pages = Integer.parseInt(args[2]);
 		}
 		
 		try{
-			(new ApiTester()).run();
+			(new ApiTester(apiKey, indicatorDescriptionId, pages)).run();
 		}
 		catch (Exception ex) {
 			System.out.println("An error occurred.");
 			System.out.println(ex.toString());
 		}
+	}
+	
+	public ApiTester(String apiKey, Integer indicatorDescriptionId, Integer pages) {
+		_apiKey = apiKey;
+		_indicatorDescriptionId = indicatorDescriptionId;
+		_pages = pages;
 	}
 
 	/**
@@ -45,14 +66,28 @@ public class ApiTester {
 		JSONObject indicatorDescription = null;
 		JSONArray dimensionGraphs = null;
 		HashMap<Integer, JSONObject> dimensionGraphMap = new HashMap<Integer, JSONObject>();
-		JSONArray ages = null;
 		HashMap<Integer, String> ageMap = new HashMap<Integer, String>();
-		JSONArray sexes = null;
 		HashMap<Integer, String> sexMap = new HashMap<Integer, String>();
-		JSONArray indicators = null;
-		int currentDisplayedIndex = 0;
+		HashMap<Integer, String> localeMap = new HashMap<Integer, String>();
+		HashMap<Integer, String> timeFrameMap = new HashMap<Integer, String>();
 		
-		//First, get general information about the Indicator Description.
+		//Make sure we have an API key.
+		if (_apiKey == null) {
+			BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+			
+			System.out.println("No API key specified - please enter your API key: ");
+			_apiKey = reader.readLine();
+		}
+		
+		//Make sure we have an Indicator Description Id.
+		if (_indicatorDescriptionId == null) {
+			BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+			
+			System.out.println("No Indicator Description Id specified - please enter an Indicator Description Id: ");
+			_indicatorDescriptionId = Integer.parseInt(reader.readLine());
+		}
+		
+		//Get general information about the Indicator Description.
 		System.out.println(String.format("Getting information for the Indicator Description with ID = %s...", _indicatorDescriptionId));
 		indicatorDescription = makeGetApiCall("IndicatorDescription/" + _indicatorDescriptionId).getJSONObject(0);
 		
@@ -74,82 +109,119 @@ public class ApiTester {
 		
 		//Get all of the ages. These will be used later when we are writing the results to the console.
 		System.out.println("Getting list of ages...");
-		ages = makeGetApiCall("Ages/1");
-		
-		for (int i = 0; i < ages.length(); i++) {
-			JSONObject a = ages.getJSONObject(i);
-			
-			ageMap.put(a.getInt("ID"), a.getString("Name"));
-		}
+		ageMap = getLookup("Ages");
 		
 		//Get all of the sexes. These will be used later when we are writing the results to the console.
 		System.out.println("Getting list of sexes...");
-		sexes = makeGetApiCall("Sexes/1");
+		sexMap = getLookup("Sexes");
 		
-		for (int i = 0; i < sexes.length(); i++) {
-			JSONObject s = sexes.getJSONObject(i);
-			
-			sexMap.put(s.getInt("ID"), s.getString("Name"));
-		}
+		//Get all of the locales. These will be used later when we are writing the results to the console.
+		System.out.println("Getting list of locales...");
+		localeMap = getLookup("Locales", "ID", "FullName");
 		
-		//Now, query for Indicators for the Indicator Description which also map to the Dimension Graphs.
-		//  Note that there is no "in" operator, but we can fake it. Have a look at FilterCriterion.toJSON() for more information.
-		//  Also note that we are only requesting the first page (1,000 Indicators) of data. In reality we would put this code in
-		//    a loop if we wanted to get all of the data.
-		System.out.println("Getting a list of Indicators...");
-		indicators = makePostApiCall("Indicators/Filter", new Filter()
-			.addCriterion("IndicatorDescriptionID", FilterOperator.Equal, _indicatorDescriptionId)
-			.addCriterion("DimensionGraphID", FilterOperator.In, dimensionGraphMap.keySet().toArray())
-			.toJSON());
+		//Get all of the time frames. These will be used later when we are writing the results to the console.
+		System.out.println("Getting list of time frames...");
+		timeFrameMap = getLookup("Timeframes");
 		
 		//Output some general information about the Indicator Description.
-		System.out.println(indicatorDescription.getString("ShortDescription"));
-		System.out.println(indicatorDescription.getString("FullDescription"));
 		System.out.println();
-
-		//Output the data 10 records at a time until the user "quits".
-		do {
-			int stop = Math.min(currentDisplayedIndex + 10, indicators.length());
-
-			System.out.println();
-			System.out.print(String.format("%-20s", "Age"));
-			System.out.print(String.format("%-10s", "Sex"));
-			System.out.print(String.format("%-10s", "Value"));
-			System.out.print(String.format("%-10s", "SE"));
-			System.out.print(String.format("%s", "CI"));
-			System.out.println();
-
-			//For each Indicator (value), we find the associated (cached) Dimension Graph and use that to pull out the (cached) Age and Sex names.
-			for (int i = currentDisplayedIndex; i <= stop; i++) {
-				JSONObject indicator = indicators.getJSONObject(i);
-				JSONObject dimensionGraph = dimensionGraphMap.get(indicator.getInt("DimensionGraphID"));
-				String ageName = ageMap.get(dimensionGraph.getInt("AgeID"));
-				String sexName = sexMap.get(dimensionGraph.getInt("SexID"));
-				String value = indicator.getString("FormattedValue");
-				String se = indicator.getString("StandardErrorFormatted");
-				String ciLow = indicator.getString("ConfidenceIntervalLowFormatted");
-				String ciHigh = indicator.getString("ConfidenceIntervalHighFormatted");
-
-				System.out.print(String.format("%-20s", ageName));
-				System.out.print(String.format("%-10s", sexName));
-				System.out.print(String.format("%-10s", value));
-				System.out.print(String.format("%-10s", se));
-				System.out.print(String.format("%s-%s", ciLow, ciHigh));
-				System.out.println();
-				
-				currentDisplayedIndex++;
-			}
-			
-			//Check if there is more data to display.
-			if ((currentDisplayedIndex != (indicators.length() - 1)))
-				System.out.print("Press 'q' to quit, any other key to show more: ");
-			else
-				break;
-			
-		} while (System.in.read() != (int)'q');
+		System.out.println();
+		
+		ExportIndicators(indicatorDescription, dimensionGraphMap, ageMap, sexMap, localeMap, timeFrameMap);
 
 		System.out.println("Done, press any key to exit.");
 		System.in.read();
+	}
+	
+	private void ExportIndicators(JSONObject indicatorDescription, HashMap<Integer, JSONObject> dimensionGraphMap, HashMap<Integer, String> ageMap, HashMap<Integer, String> sexMap, HashMap<Integer, String> localeMap, HashMap<Integer, String> timeFrameMap) throws Exception {
+		String filename = String.format("export/%s.csv", indicatorDescription.getInt("ID"));
+		FileWriter writer = new FileWriter(filename);
+		Filter filter = new Filter()
+			.addCriterion("IndicatorDescriptionID", FilterOperator.Equal, _indicatorDescriptionId)
+			.addCriterion("DimensionGraphID", FilterOperator.In, dimensionGraphMap.keySet().toArray());
+		Integer pageCount = (Integer)makePostApiCall("Indicators/Filter/PageCount", filter.toJSON()).get(0);
+		Integer pagesToExport = Math.min(_pages, pageCount);
+		Integer currentPage = 1;
+		Boolean hasMore = true;
+		
+		System.out.println(indicatorDescription.getString("ShortDescription"));
+		System.out.println(indicatorDescription.getString("FullDescription"));
+		System.out.println();
+		System.out.println();
+		System.out.println(String.format("Exporting %s of %s total page(s) of data to \"%s\"...", pagesToExport, pageCount, filename));
+
+		//Write header.
+		writer.append("Indicator Name,Locale, FIPS Code,Time Frame,Value,SE,CI Low,CI High\r\n");
+
+		//Output the data 10 records at a time until the user "quits".
+		do {
+			System.out.println(String.format("Getting page %s of %s (%s%%)...", currentPage, pagesToExport, Math.round(100 * (currentPage / (double)pagesToExport))));
+
+			//Now, query for Indicators for the Indicator Description which also map to the Dimension Graphs.
+			//  Note that there is no "in" operator, but we can fake it. Have a look at FilterCriterion.toJSON() for more information.
+			//  Also note that we are only requesting the first page (1,000 Indicators) of data, so we loop until no more data is returned.
+			JSONArray indicators = makePostApiCall("Indicators/Filter", filter.setPage(currentPage).toJSON());
+			
+			//For each Indicator (value), we find the associated (cached) Dimension Graph and use that to pull out the (cached) dimension names.
+			for (int i = 0; i < indicators.length(); i++) {
+				JSONObject indicator = indicators.getJSONObject(i);
+				JSONObject dimensionGraph = dimensionGraphMap.get(indicator.getInt("DimensionGraphID"));
+				
+				try {
+					Object indicatorName = prepareForCsv(dimensionGraph.get("DimensionGraphLabel"));
+					String localeName = prepareForCsv(localeMap.get(indicator.getInt("LocaleID")));
+					Object fipsCode = prepareForCsv(indicator.get("FIPSCode"));
+					String timeFrameName = prepareForCsv(timeFrameMap.get(indicator.getInt("TimeframeID")));
+					Object value = prepareForCsv(indicator.get("FormattedValue"));
+					Object se = prepareForCsv(indicator.get("StandardErrorFormatted"));
+					Object ciLow = prepareForCsv(indicator.get("ConfidenceIntervalLowFormatted"));
+					Object ciHigh = prepareForCsv(indicator.get("ConfidenceIntervalHighFormatted"));
+	
+					writer.append(String.format("%s,%s,%s,%s,%s,%s,%s,%s\r\n", indicatorName, localeName, fipsCode, timeFrameName, value, se, ciLow, ciHigh));
+				}
+				catch (Exception ex) {
+					System.out.println(String.format("\r\nWhile processing the JSON object at index %s, the error below occurred.\r\nJSON:\r\n%s\r\n\r\nError: %s", i, indicator.toString(), ex.getMessage()));
+				}
+			}
+
+			currentPage++;
+			hasMore = (indicators.length() > 0);
+		} while (hasMore && (_pages == null || pagesToExport >= currentPage));
+		
+		writer.flush();
+		writer.close();
+	}
+
+	private HashMap<Integer, String> getLookup(String resource) throws Exception {
+		return getLookup(resource, "ID", "Name");
+	}
+
+	private HashMap<Integer, String> getLookup(String resource, String keyField, String nameField) throws Exception {
+		Integer page = 1;
+		HashMap<Integer, String> lookup = new HashMap<Integer, String>();
+		Boolean hasMore = true;
+		
+		do {
+			JSONArray items = makeGetApiCall(String.format("%s/%s", resource, page));
+			
+			for (int i = 0; i < items.length(); i++) {
+				JSONObject o = items.getJSONObject(i);
+				
+				lookup.put(o.getInt("ID"), o.getString("Name"));
+			}
+			
+			page++;
+			hasMore = (items.length() > 0);
+		} while (hasMore);
+		
+		return lookup;
+	}
+	
+	private String prepareForCsv(Object value) {
+		if (value == null)
+			return "";
+		
+		return String.format("\"%s\"", value);
 	}
 
 	/**
@@ -207,7 +279,7 @@ public class ApiTester {
 			writer.flush();
 			writer.close();
 		}
-
+		
 		//Use a scanner to easily read the response stream.
 		scanner = new Scanner(connection.getInputStream());
 		responseText = scanner.useDelimiter("\\A").next();

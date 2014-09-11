@@ -140,7 +140,7 @@ public class ApiTester {
 			.addCriterion("IndicatorDescriptionID", FilterOperator.Equal, _indicatorDescriptionId)
 			.addCriterion("DimensionGraphID", FilterOperator.In, dimensionGraphMap.keySet().toArray());
 		Integer pageCount = (Integer)makePostApiCall("Indicators/Filter/PageCount", filter.toJSON()).get(0);
-		Integer pagesToExport = Math.min(_pages, pageCount);
+		Integer pagesToExport = (_pages == null ? pageCount : Math.min(_pages, pageCount));
 		Integer currentPage = 1;
 		Boolean hasMore = true;
 		
@@ -186,7 +186,7 @@ public class ApiTester {
 
 			currentPage++;
 			hasMore = (indicators.length() > 0);
-		} while (hasMore && (_pages == null || pagesToExport >= currentPage));
+		} while (hasMore && pagesToExport >= currentPage);
 		
 		writer.flush();
 		writer.close();
